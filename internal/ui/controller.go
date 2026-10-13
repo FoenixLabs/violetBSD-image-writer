@@ -2,6 +2,7 @@ package ui
 
 import (
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -108,47 +109,23 @@ func (c *Controller) write(path string, d disks.Drive) error {
 		return err
 	}
 	defer func() { source.Close() }()
-	if _, err = disks.CheckImageFile(source); err != nil {
-		return err
-	}
-	if strings.HasSuffix(strings.ToLower(path), ".gz") {
-		c.report("Decompressing image; this needs space for the full image…", 0)
-		// Reject temp volumes on the destination too, before any offlining operation.
-		if err = disks.CheckSource(os.TempDir(), d); err != nil {
-			return err
-		}
-		temp, err := os.CreateTemp("", "violetbsd-image-*.img")
-		if err != nil {
-			return err
-		}
-		defer os.Remove(temp.Name())
-		defer temp.Close()
-		gz, err := gzip.NewReader(source)
-		if err != nil {
-			return err
-		}
-		count, copyErr := io.Copy(temp, io.LimitReader(gz, d.Size+1))
-		closeErr := gz.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if count > d.Size {
-			return fmt.Errorf("expanded image exceeds destination capacity")
-		}
-		source.Close()
-		source = temp
-	}
 	before, err := disks.CheckImageFile(source)
 	if err != nil {
 		return err
 	}
-	if before.Size() > d.Size || before.Size()%512 != 0 {
-		return fmt.Errorf("image size does not fit the destination")
+	size := before.Size()
+	var offset int64
+	compressed := strings.HasSuffix(strings.ToLower(path), ".gz")
+	var expectedSource [32]byte
+	if compressed {
+		c.report("Checking compressed image and entropy slot without temporary extraction…", 0)
+		size, offset, expectedSource, err = writer.InspectGzip(source, d.Size)
+	} else {
+		if size > d.Size || size%512 != 0 {
+			return fmt.Errorf("image size does not fit the destination")
+		}
+		offset, err = writer.SeedOffset(source, size)
 	}
-	offset, err := writer.SeedOffset(source, before.Size())
 	if err != nil {
 		return err
 	}
@@ -160,16 +137,38 @@ func (c *Controller) write(path string, d disks.Drive) error {
 	if _, err = source.Seek(0, 0); err != nil {
 		return err
 	}
+	var input io.Reader = source
+	sourceHash := sha256.New()
+	if compressed {
+		gz, err := gzip.NewReader(source)
+		if err != nil {
+			return err
+		}
+		defer gz.Close()
+		input = io.TeeReader(gz, sourceHash)
+	}
 	target, err := disks.Open(d)
 	if err != nil {
 		return err
 	}
 	defer target.Close()
-	digest, err := writer.Copy(target, source, before.Size(), offset, seed, func(n int64) {
-		c.report("Writing image and unique entropy seed…", .5*float64(n)/float64(before.Size()))
+	digest, err := writer.Copy(target, input, size, offset, seed, func(n int64) {
+		c.report("Writing image and unique entropy seed…", .5*float64(n)/float64(size))
 	})
 	if err != nil {
 		return err
+	}
+	if compressed {
+		// Force gzip trailer/checksum validation and reject a changed stream length.
+		var extra [1]byte
+		if n, e := input.Read(extra[:]); n != 0 || e != io.EOF {
+			return fmt.Errorf("compressed image changed or failed its final checksum: %v", e)
+		}
+		var actual [32]byte
+		copy(actual[:], sourceHash.Sum(nil))
+		if actual != expectedSource {
+			return fmt.Errorf("compressed source changed after validation; rewrite destination")
+		}
 	}
 	after, err := source.Stat()
 	if err != nil {
@@ -185,8 +184,8 @@ func (c *Controller) write(path string, d disks.Drive) error {
 	if _, err = target.Seek(0, 0); err != nil {
 		return err
 	}
-	if err = writer.Verify(target, before.Size(), digest, func(n int64) {
-		c.report("Verifying the entire written image…", .5+.5*float64(n)/float64(before.Size()))
+	if err = writer.Verify(target, size, digest, func(n int64) {
+		c.report("Verifying the entire written image…", .5+.5*float64(n)/float64(size))
 	}); err != nil {
 		return err
 	}

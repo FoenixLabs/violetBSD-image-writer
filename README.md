@@ -68,9 +68,12 @@ indirect blocks and unsupported geometry. The writer changes only the reserved
 536-byte seed extent. `crypto/rand` supplies fresh host OS randomness for each
 write; the seed is never logged or saved in a temporary personalized image.
 
-Gzip inputs require temporary space for the full expanded image. The temporary
-file is removed afterward and contains only the source image, not the new private
-seed. Readback is checked against the SHA-256 of the personalized output, so it
+Gzip inputs use bounded-memory streaming with no full-size temporary file. A
+complete validation pass checks the compressed stream, expanded size and entropy
+slot before the destination is opened. Metadata reads replay the stream as needed.
+Writing then streams decompression directly to the drive and checks that the
+source hash still matches. This costs additional reads but no 16 GiB extraction
+space. Readback is checked against the SHA-256 of the personalized output, so it
 will intentionally differ from the public source image's SHA-256.
 
 The existing boot service consumes the seed before network services. Early
