@@ -106,7 +106,7 @@ jobs:
 
           Select an image and external destination, confirm erasure, and the writer installs unique entropy and verifies the full write. Download the executable for your OS and use the included SHA-256 checksums.
 
-          These single-file executables use system GUI libraries. Linux requires GTK 3 and glibc. macOS/Windows builds are not publisher-signed. Automated tests do not verify real-device writing. See the repository README for administrator launch instructions and supported drive restrictions.
+          These single-file executables use system GUI libraries. Linux requires GTK 3 and glibc. macOS/Windows builds are not publisher-signed. Automated tests do not verify real-device writing. See the repository README for administrator authorization instructions and supported drive restrictions.
           NOTES
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber

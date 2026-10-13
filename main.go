@@ -21,14 +21,17 @@ func main() {
 	list := flag.Bool("list", false, "list eligible destinations without writing")
 	version := flag.Bool("version", false, "print version")
 	licenses := flag.Bool("licenses", false, "print bundled third-party notices")
+	helper := flag.String("elevated-write", "", "internal administrator-authorized worker")
 	flag.Parse()
 	var err error
 	switch {
+	case *helper != "":
+		err = ui.ElevatedWrite(*helper)
 	case *licenses:
 		fmt.Print(thirdParty)
 		return
 	case *version:
-		fmt.Println("violetBSD Image Writer 0.2.0 (Go)")
+		fmt.Println("violetBSD Image Writer 0.2.1 (Go)")
 		return
 	case *inspect != "":
 		var f *os.File

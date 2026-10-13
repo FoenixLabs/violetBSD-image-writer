@@ -14,11 +14,12 @@ import (
 const Title = "violetBSD Image Writer"
 
 type Controller struct {
-	Drives   []disks.Drive // Accessed only on the UI thread.
-	mu       sync.Mutex
-	busy     bool
-	status   string
-	fraction float64
+	Drives       []disks.Drive // Accessed only on the UI thread.
+	mu           sync.Mutex
+	busy         bool
+	status       string
+	fraction     float64
+	progressHook func(string, float64)
 }
 
 func Run() error {
@@ -34,6 +35,9 @@ func (c *Controller) report(status string, fraction float64) {
 	defer c.mu.Unlock()
 	c.status = status
 	c.fraction = fraction
+	if c.progressHook != nil {
+		c.progressHook(status, fraction)
+	}
 }
 func (c *Controller) Refresh() error {
 	c.Drives = nil
@@ -52,9 +56,6 @@ func (c *Controller) Refresh() error {
 func (c *Controller) Validate(path string, index int) (disks.Drive, error) {
 	if busy, _, _ := c.Snapshot(); busy {
 		return disks.Drive{}, fmt.Errorf("a write is already running")
-	}
-	if !disks.Privileged() {
-		return disks.Drive{}, fmt.Errorf("administrator privileges are required: launch with sudo on Linux/macOS, or Run as administrator on Windows")
 	}
 	if index < 0 || index >= len(c.Drives) {
 		return disks.Drive{}, fmt.Errorf("select a destination drive")
@@ -89,7 +90,7 @@ func (c *Controller) Start(path string, d disks.Drive) {
 	c.fraction = 0
 	c.mu.Unlock()
 	go func() {
-		err := c.write(path, d)
+		err := c.authorizedWrite(path, d)
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.busy = false

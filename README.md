@@ -33,16 +33,18 @@ Download binaries and their SHA-256 checksums from the [Releases page](https://g
 ## Run
 
 - Linux: unmount the destination's partitions. Make the download executable with
-  `chmod +x violetbsd-image-writer-linux-x86_64`, then launch from a graphical
-  terminal with `sudo ./violetbsd-image-writer-linux-x86_64`. GTK 3 must be present
-  (usually `libgtk-3-0` on Debian/Ubuntu or `gtk3` on Arch/Fedora). A graphical
-  session must allow the administrator process to connect to its display.
-- macOS: unmount the external disk in Disk Utility. Run
-  `chmod +x violetbsd-image-writer-macos-universal`, then
-  `sudo ./violetbsd-image-writer-macos-universal` from Terminal in the download
-  directory. The OS may request removable-volume access.
+  `chmod +x violetbsd-image-writer-linux-x86_64`, then launch it normally.
+  GTK 3, polkit (`pkexec`) and a running desktop polkit authentication agent are
+  required. After the erase confirmation, approve the system password dialog.
+  The GUI stays unprivileged; only a headless disk-writing worker runs as root.
+  If no prompt appears, check that your desktop's polkit agent is running.
+- macOS: unmount the external disk in Disk Utility, make the download executable,
+  and launch it normally from Terminal. Approve the macOS administrator password
+  dialog after confirming the destination. The system authorization API buffers
+  worker output, so progress may remain at the authorization message until the
+  operation finishes; keep the app open. Native acceptance testing is pending.
 - Windows: open the `.exe` and accept the administrator prompt. The executable
-  includes a UAC manifest; it does not require a separate manifest file.
+  manifest requests UAC elevation automatically.
 
 Image selection and read-only drive discovery can run without administrator
 privileges on Unix, but writing requires them. Windows builds request them at
