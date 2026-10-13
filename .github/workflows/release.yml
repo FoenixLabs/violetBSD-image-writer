@@ -1,0 +1,117 @@
+name: Build and release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-writer-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  build:
+    name: Build all release binaries
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Compile Linux, Windows, and universal macOS
+        run: go run ./cmd/release -out dist
+      - name: Verify checksums and Linux entry point
+        working-directory: dist
+        run: |
+          sha256sum --check violetbsd-image-writer.SHA256
+          ./violetbsd-image-writer-linux-x86_64 --version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-binaries
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-binaries
+          path: dist
+      - name: Publish binaries and checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_REF_NAME: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --check violetbsd-image-writer.SHA256
+          cd ..
+          if [[ "$SOURCE_REF" == refs/tags/v* ]]; then
+            tag="$SOURCE_REF_NAME"
+            title="violetBSD Image Writer $tag"
+            prerelease=false
+          else
+            tag="build-${SOURCE_SHA:0:12}"
+            title="Development build ${SOURCE_SHA:0:12}"
+            prerelease=true
+          fi
+          cat > release-notes.md <<NOTES
+          Native Go image writer for Linux x86-64, Windows x86-64, and macOS Intel/Apple Silicon (universal).
+
+          Source commit: $SOURCE_SHA
+          Build and test results: $RUN_URL
+
+          Select an image and external destination, confirm erasure, and the writer installs unique entropy and verifies the full write. Download the executable for your OS and use the included SHA-256 checksums.
+
+          These single-file executables use system GUI libraries. Linux requires GTK 3 and glibc. macOS/Windows builds are not publisher-signed. Automated tests do not verify real-device writing. See the repository README for administrator launch instructions and supported drive restrictions.
+          NOTES
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+            gh release edit "$tag" --title "$title" --notes-file release-notes.md --prerelease="$prerelease" --draft=false
+          else
+            gh release create "$tag" dist/* --target "$SOURCE_SHA" --title "$title" --notes-file release-notes.md --prerelease="$prerelease" --draft
+            gh release edit "$tag" --draft=false
+          fi
