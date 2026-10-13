@@ -99,6 +99,10 @@ func runNative(c *Controller) error {
 		}},
 		{Cmd: sel("refresh:"), Fn: func(objc.ID, objc.SEL, objc.ID) { refreshList() }},
 		{Cmd: sel("write:"), Fn: func(objc.ID, objc.SEL, objc.ID) {
+			if c.Completed() {
+				app.Send(sel("stop:"), objc.ID(0))
+				return
+			}
 			index := objc.Send[int64](combo, sel("indexOfSelectedItem"))
 			d, err := c.Validate(imagePath, int(index))
 			if err != nil {
@@ -113,8 +117,12 @@ func runNative(c *Controller) error {
 			busy, text, fraction := c.Snapshot()
 			status.Send(sel("setStringValue:"), ns(text))
 			progress.Send(sel("setDoubleValue:"), fraction)
-			for _, v := range []objc.ID{browse, combo, refresh, write} {
-				v.Send(sel("setEnabled:"), !busy)
+			write.Send(sel("setEnabled:"), !busy)
+			if c.Completed() {
+				write.Send(sel("setTitle:"), ns("Close"))
+			}
+			for _, v := range []objc.ID{browse, combo, refresh} {
+				v.Send(sel("setEnabled:"), !busy && !c.Completed())
 			}
 		}},
 		{Cmd: sel("windowShouldClose:"), Fn: func(objc.ID, objc.SEL, objc.ID) bool {

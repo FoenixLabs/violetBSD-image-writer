@@ -59,6 +59,9 @@ are rejected. Windows leaves a selected disk offline after a write or failure;
 disconnect it afterward. Linux refuses mounted filesystems, swap and mapped
 children. The app does not automatically unmount Unix filesystems.
 
+After successful writing and full verification, **Write image** becomes **Close**.
+Click it to exit. Failed operations keep the write controls available for recovery.
+
 ## Entropy and image handling
 
 Use a trusted, updated violetBSD release image with the reserved UFS entropy
@@ -209,3 +212,6 @@ physical-drive acceptance test.
 - `internal/ui`: native GTK, Cocoa and Win32 windows plus the shared controller.
 - `cmd/release`: cross-platform builds, Windows resources, universal Mac packaging.
 - `THIRD_PARTY.txt`: bundled dependency license notices (also embedded in binaries).
+
+User confirmed successful Linux writing and verification with version 0.2.2 on
+2026-10-13. macOS/Windows physical-device acceptance remains pending.

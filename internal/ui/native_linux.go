@@ -131,6 +131,8 @@ func runNative(c *Controller) error {
 	progress := barNew()
 	pack(box, progress, 0, 0, 0)
 	write := button("Write image")
+	var buttonLabel func(uintptr, string)
+	bind("gtk_button_set_label", &buttonLabel)
 	pack(box, write, 0, 0, 0)
 	message := func(text string, confirm bool) bool {
 		dlg := dialogNew()
@@ -173,6 +175,10 @@ func runNative(c *Controller) error {
 		destroy(dlg)
 	}), 0, 0, 0)
 	connect(write, "clicked", purego.NewCallback(func(uintptr, uintptr) {
+		if c.Completed() {
+			quit()
+			return
+		}
 		path := entryGet(entry)
 		d, err := c.Validate(path, int(selected(combo)))
 		if err != nil {
@@ -201,7 +207,12 @@ func runNative(c *Controller) error {
 		if busy {
 			enabled = 0
 		}
-		for _, w := range []uintptr{entry, browse, combo, refresh, write} {
+		sensitive(write, enabled)
+		if c.Completed() {
+			buttonLabel(write, "Close")
+			enabled = 0
+		}
+		for _, w := range []uintptr{entry, browse, combo, refresh} {
 			sensitive(w, enabled)
 		}
 		return 1

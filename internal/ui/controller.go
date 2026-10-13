@@ -18,6 +18,7 @@ type Controller struct {
 	Drives       []disks.Drive // Accessed only on the UI thread.
 	mu           sync.Mutex
 	busy         bool
+	completed    bool
 	status       string
 	fraction     float64
 	progressHook func(string, float64)
@@ -30,6 +31,11 @@ func (c *Controller) Snapshot() (bool, string, float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.busy, c.status, c.fraction
+}
+func (c *Controller) Completed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.completed && !c.busy
 }
 func (c *Controller) report(status string, fraction float64) {
 	c.mu.Lock()
@@ -87,6 +93,7 @@ func (c *Controller) Start(path string, d disks.Drive) {
 		return
 	}
 	c.busy = true
+	c.completed = false
 	c.status = "Checking image…"
 	c.fraction = 0
 	c.mu.Unlock()
@@ -95,6 +102,7 @@ func (c *Controller) Start(path string, d disks.Drive) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.busy = false
+		c.completed = err == nil
 		if err != nil {
 			c.status = "Failed: " + err.Error() + ". If writing began, rewrite the destination before use."
 		} else {

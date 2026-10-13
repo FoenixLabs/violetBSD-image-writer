@@ -98,6 +98,10 @@ func runNative(c *Controller) error {
 			case 102:
 				refreshList()
 			case 103:
+				if c.Completed() {
+					destroy.Call(hwnd)
+					return 0
+				}
 				index, _, _ := send.Call(combo, 0x147, 0, 0)
 				d, err := c.Validate(imagePath, int(index))
 				if err != nil {
@@ -117,7 +121,12 @@ func runNative(c *Controller) error {
 			if busy {
 				flag = 0
 			}
-			for _, v := range []uintptr{browse, combo, refresh, write} {
+			enable.Call(write, flag)
+			if c.Completed() {
+				text(write, "Close")
+				flag = 0
+			}
+			for _, v := range []uintptr{browse, combo, refresh} {
 				enable.Call(v, flag)
 			}
 			return 0
