@@ -31,7 +31,7 @@ func main() {
 		fmt.Print(thirdParty)
 		return
 	case *version:
-		fmt.Println("violetBSD Image Writer 0.2.3 (Go)")
+		fmt.Println("violetBSD Image Writer 0.2.4 (Go)")
 		return
 	case *inspect != "":
 		var f *os.File

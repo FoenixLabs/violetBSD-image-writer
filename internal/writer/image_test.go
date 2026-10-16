@@ -12,11 +12,20 @@ import (
 func fixture() ([]byte, int64) {
 	b := make([]byte, 2*1024*1024)
 	copy(b[510:], []byte{0x55, 0xaa})
+	b[446+4] = 0xa9
+	binary.LittleEndian.PutUint32(b[446+8:], 2048)
+	binary.LittleEndian.PutUint32(b[446+12:], uint32(len(b)/512-2048))
 	put := func(off int, v uint32) { be.PutUint32(b[off:], v) }
 	label := 2049 * 512
 	root := 2050 * 512
 	put(label, 0x82564557)
 	put(label+132, 0x82564557)
+	put(label+40, 512)
+	be.PutUint16(b[label+138:], 4)
+	b[label+148+12] = 7
+	put(label+148+2*16, uint32(len(b)/512-2048))
+	put(label+152+2*16, 2048)
+	put(label+148+3*16, uint32(len(b)/512))
 	put(label+148, uint32((len(b)-root)/512))
 	put(label+152, 2050)
 	sb := root + 8192
@@ -42,8 +51,81 @@ func fixture() ([]byte, int64) {
 	off := int64(root + 27*1024)
 	sum := sha1.Sum(b[off : off+516])
 	copy(b[off+516:], sum[:])
+	fixLabelChecksum(b[label : label+512])
 	return b, off
 }
+func fixLabelChecksum(label []byte) {
+	be.PutUint16(label[136:], 0)
+	var sum uint16
+	for i := 0; i < 148+16*int(be.Uint16(label[138:])); i += 2 {
+		sum ^= be.Uint16(label[i:])
+	}
+	be.PutUint16(label[136:], sum)
+}
+
+func multiBootFixture() ([]byte, int64) {
+	old, offset := fixture()
+	const start = 8192
+	const delta = (start - 2048) * 512
+	b := make([]byte, len(old)+delta)
+	copy(b[:512], old[:512])
+	copy(b[start*512:], old[2048*512:])
+	for i, p := range []struct {
+		kind         byte
+		start, count uint32
+	}{{6, 2048, 2048}, {0x0c, 4096, 4096}, {0xa9, start, uint32(len(old)/512 - 2048)}} {
+		entry := b[446+16*i : 462+16*i]
+		clear(entry)
+		entry[4] = p.kind
+		binary.LittleEndian.PutUint32(entry[8:], p.start)
+		binary.LittleEndian.PutUint32(entry[12:], p.count)
+	}
+	label := b[(start+1)*512 : (start+2)*512]
+	be.PutUint32(label[152:], start+2)
+	be.PutUint32(label[152+2*16:], start)
+	be.PutUint32(label[148+3*16:], uint32(len(b)/512))
+	fixLabelChecksum(label)
+	return b, offset + delta
+}
+
+func TestMultiBootSeedOffset(t *testing.T) {
+	b, want := multiBootFixture()
+	got, err := SeedOffset(bytes.NewReader(b), int64(len(b)))
+	if err != nil || got != want {
+		t.Fatalf("got %d, want %d: %v", got, want, err)
+	}
+}
+
+func TestRejectInvalidPartitionMapping(t *testing.T) {
+	for name, damage := range map[string]func([]byte){
+		"missing NetBSD":     func(b []byte) { b[446+2*16+4] = 0x0c },
+		"overlap":            func(b []byte) { binary.LittleEndian.PutUint32(b[446+16+8:], 2048) },
+		"out of bounds FAT":  func(b []byte) { binary.LittleEndian.PutUint32(b[446+12:], 0xffffffff) },
+		"zero length":        func(b []byte) { binary.LittleEndian.PutUint32(b[446+2*16+12:], 0) },
+		"duplicate NetBSD":   func(b []byte) { b[446+4] = 0xa9 },
+		"bad label count":    func(b []byte) { be.PutUint16(b[8193*512+138:], 17) },
+		"bad label checksum": func(b []byte) { b[8193*512+136] ^= 1 },
+		"root in FAT": func(b []byte) {
+			label := b[8193*512 : 8194*512]
+			be.PutUint32(label[152:], 4096)
+			fixLabelChecksum(label)
+		},
+		"container mismatch": func(b []byte) {
+			label := b[8193*512 : 8194*512]
+			be.PutUint32(label[152+2*16:], 2048)
+			fixLabelChecksum(label)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b, _ := multiBootFixture()
+			damage(b)
+			if _, err := SeedOffset(bytes.NewReader(b), int64(len(b))); err == nil {
+				t.Fatal("accepted invalid mapping")
+			}
+		})
+	}
+}
+
 func TestSeedFormatAndFreshness(t *testing.T) {
 	a, err := Seed()
 	if err != nil {

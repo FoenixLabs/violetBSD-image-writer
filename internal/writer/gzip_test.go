@@ -22,7 +22,10 @@ func compressedFixture(t *testing.T, b []byte) []byte {
 	return out.Bytes()
 }
 func TestGzipStreamPersonalization(t *testing.T) {
-	raw, wantOffset := fixture()
+	t.Run("standard", func(t *testing.T) { raw, off := fixture(); testGzipPersonalization(t, raw, off) })
+	t.Run("multi-boot", func(t *testing.T) { raw, off := multiBootFixture(); testGzipPersonalization(t, raw, off) })
+}
+func testGzipPersonalization(t *testing.T, raw []byte, wantOffset int64) {
 	data := compressedFixture(t, raw)
 	size, off, hash, err := InspectGzip(bytes.NewReader(data), int64(len(raw)))
 	if err != nil || size != int64(len(raw)) || off != wantOffset || hash != sha256.Sum256(raw) {

@@ -28,7 +28,8 @@ func Seed() ([]byte, error) {
 	return b, nil
 }
 
-// SeedOffset accepts only the current 512-byte-sector, big-endian UFS1 release layout.
+// SeedOffset locates a unique NetBSD MBR container in standard or multi-boot
+// release images, then validates its 512-byte-sector, big-endian UFS1 layout.
 // Every read is bounded; unsupported geometry, links and indirect blocks fail closed.
 func SeedOffset(r io.ReaderAt, size int64) (int64, error) {
 	read := func(off, n int64) ([]byte, error) {
@@ -39,24 +40,74 @@ func SeedOffset(r io.ReaderAt, size int64) (int64, error) {
 		_, err := r.ReadAt(b, off)
 		return b, err
 	}
-	mbr, err := read(510, 2)
+	if size < 512 || size%512 != 0 {
+		return 0, errors.New("invalid image sector size")
+	}
+	mbr, err := read(0, 512)
 	if err != nil {
 		return 0, err
 	}
-	if !bytes.Equal(mbr, []byte{0x55, 0xaa}) {
+	if !bytes.Equal(mbr[510:], []byte{0x55, 0xaa}) {
 		return 0, errors.New("invalid MBR")
 	}
-	label, err := read(2049*512, 512)
+	type extent struct{ start, end int64 }
+	var partitions []extent
+	var container extent
+	containers := 0
+	for index := 0; index < 4; index++ {
+		entry := mbr[446+16*index : 462+16*index]
+		start := int64(binary.LittleEndian.Uint32(entry[8:]))
+		count := int64(binary.LittleEndian.Uint32(entry[12:]))
+		if entry[4] == 0 {
+			if start != 0 || count != 0 {
+				return 0, errors.New("invalid empty MBR partition")
+			}
+			continue
+		}
+		if (entry[0] != 0 && entry[0] != 0x80) || start < 1 || count == 0 || start+count > size/512 {
+			return 0, errors.New("invalid MBR partition extent")
+		}
+		part := extent{start, start + count}
+		for _, previous := range partitions {
+			if part.start < previous.end && previous.start < part.end {
+				return 0, errors.New("overlapping MBR partitions")
+			}
+		}
+		partitions = append(partitions, part)
+		if entry[4] == 0xa9 {
+			containers++
+			container = part
+		}
+	}
+	if containers != 1 || container.end-container.start < 3 {
+		return 0, errors.New("expected one valid NetBSD MBR partition")
+	}
+	label, err := read((container.start+1)*512, 512)
 	if err != nil {
 		return 0, err
 	}
 	u := func(b []byte, off int) int64 { return int64(be.Uint32(b[off:])) }
-	if u(label, 0) != 0x82564557 || u(label, 132) != 0x82564557 {
+	if u(label, 0) != 0x82564557 || u(label, 132) != 0x82564557 || u(label, 40) != 512 {
 		return 0, errors.New("invalid big-endian disklabel")
+	}
+	nparts := int(be.Uint16(label[138:]))
+	if nparts < 4 || nparts > 16 {
+		return 0, errors.New("unsupported disklabel partition count")
+	}
+	var checksum uint16
+	for i := 0; i < 148+16*nparts; i += 2 {
+		checksum ^= be.Uint16(label[i:])
+	}
+	if checksum != 0 || label[148+12] != 7 {
+		return 0, errors.New("invalid disklabel checksum or root type")
+	}
+	if u(label, 148+2*16) != container.end-container.start || u(label, 152+2*16) != container.start ||
+		u(label, 148+3*16) != size/512 || u(label, 152+3*16) != 0 {
+		return 0, errors.New("disklabel does not match MBR container and whole disk")
 	}
 	root := u(label, 152) * 512
 	end := root + u(label, 148)*512
-	if root < 2050*512 || end > size || end <= root {
+	if root < (container.start+2)*512 || end > container.end*512 || end <= root {
 		return 0, errors.New("invalid root filesystem bounds")
 	}
 	fsread := func(off, n int64) ([]byte, error) {

@@ -64,6 +64,14 @@ Click it to exit. Failed operations keep the write controls available for recove
 
 ## Entropy and image handling
 
+Version 0.2.4 supports both the standard violetBSD disk layout and the multi-boot
+layout with FAT16 and FAT32 primary partitions before the NetBSD container. The
+writer reads all four MBR entries, requires one non-overlapping NetBSD partition,
+and locates its big-endian disklabel at container start + one sector. It checks
+the label checksum, geometry and root/container bounds before locating entropy.
+It never interprets a FAT volume as the root or adds entropy to those volumes.
+Older versions assume a fixed label sector and cannot write multi-boot images.
+
 Use a trusted, updated violetBSD release image with the reserved UFS entropy
 file. Verify its published checksum before writing. The Go parser bounds every
 filesystem read and rejects missing slots, unsafe ownership/permissions, links,
